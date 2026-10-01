@@ -1,0 +1,374 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LOGO! Pressure</title>
+<style>
+  :root {
+    --bg: #f4f6f8; --card: #ffffff; --text: #1b1f24; --muted: #5b6573; --line: #d9dee4;
+    --accent: #0a6fa8; --track: #d6e9f5; --ok: #1a7f37; --bad: #c62828; --warn: #9a5b00; --code: #eef2f6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12161b; --card: #1b2128; --text: #e7ebef; --muted: #9aa5b1; --line: #2c343d;
+      --accent: #4fb3e8; --track: #1f3a4d; --ok: #4cc06d; --bad: #ff6b6b; --warn: #f0a640; --code: #232a32;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Tahoma, sans-serif; }
+  main { max-width: 900px; margin: 0 auto; padding: 16px; }
+  header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 14px; }
+  h1 { font-size: 20px; margin: 0; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; border-radius: 999px;
+          border: 1px solid var(--line); background: var(--card); font-weight: 600; font-size: 14px; }
+  .pill.ok { color: var(--ok); } .pill.bad { color: var(--bad); } .pill.warn { color: var(--warn); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px; margin-bottom: 14px; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; margin-bottom: 14px; }
+  .tile { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+  .tile .label { color: var(--muted); font-size: 15px; }
+  .tile .figure { display: flex; align-items: baseline; gap: 8px; direction: ltr; justify-content: flex-end; margin: 6px 0 10px; }
+  .tile .value { font-size: 56px; font-weight: 600; line-height: 1.1; }
+  .tile .unit { font-size: 20px; color: var(--muted); }
+  .meter { height: 10px; border-radius: 5px; background: var(--track); overflow: hidden; direction: ltr; }
+  .meter > div { height: 100%; width: 0; background: var(--accent); border-radius: 5px; transition: width .4s; }
+  .scale { display: flex; justify-content: space-between; direction: ltr; color: var(--muted); font-size: 12px; margin-top: 3px; }
+  .tile .foot { margin-top: 8px; font-size: 13px; color: var(--muted); }
+  .tile .foot.warn { color: var(--warn); font-weight: 600; }
+  details > summary { cursor: pointer; font-weight: 600; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin-top: 10px; }
+  label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 3px; }
+  input[type=text], input[type=password], input[type=number] {
+    width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 7px;
+    background: var(--bg); color: var(--text); font: inherit; direction: ltr; text-align: left; }
+  .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 12px; }
+  button { padding: 8px 16px; border: 0; border-radius: 7px; background: var(--accent); color: #fff; font: inherit; cursor: pointer; }
+  button.secondary { background: transparent; color: var(--text); border: 1px solid var(--line); }
+  button:disabled { opacity: .5; cursor: default; }
+  #detail { margin-top: 8px; color: var(--muted); white-space: pre-wrap; }
+  table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+  th, td { padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; direction: ltr; }
+  td { font-variant-numeric: tabular-nums; }
+  code, pre { font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
+  pre { background: var(--code); padding: 8px; border-radius: 7px; margin: 4px 0 0; white-space: pre-wrap; word-break: break-all; direction: ltr; text-align: left; }
+  .log-item { border-bottom: 1px solid var(--line); padding: 6px 0; }
+  .meta { color: var(--muted); font-size: 13px; direction: ltr; text-align: left; }
+  .empty { color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>مراقبة الضغط · <bdi dir="ltr">LOGO! 01</bdi></h1>
+    <span id="pill" class="pill bad">✕ غير متصل</span>
+  </header>
+
+  <div id="tiles" class="tiles"></div>
+
+  <section class="card">
+    <details id="settings">
+      <summary>الإعدادات والاتصال</summary>
+      <div class="grid">
+        <div><label for="host">Host</label><input id="host" type="text"></div>
+        <div><label for="port">Port (WebSocket TLS)</label><input id="port" type="number"></div>
+        <div><label for="path">Path</label><input id="path" type="text"></div>
+        <div><label for="user">Username</label><input id="user" type="text" autocomplete="username"></div>
+        <div><label for="pass">Password</label><input id="pass" type="password" autocomplete="current-password"></div>
+        <div><label for="topic">Topic</label><input id="topic" type="text"></div>
+      </div>
+      <div class="row">
+        <label style="margin:0"><input id="remember" type="checkbox"> احفظ الإعدادات وكلمة السر على هذا الجهاز فقط (واتصل تلقائياً)</label>
+      </div>
+      <div class="row">
+        <button id="connect">اتصال</button>
+        <button id="disconnect" class="secondary" disabled>قطع الاتصال</button>
+      </div>
+      <div id="detail"></div>
+    </details>
+  </section>
+
+  <section class="card">
+    <details>
+      <summary>تشخيص: كل القيم والرسائل</summary>
+      <div class="row"><button id="clear" class="secondary">مسح السجل</button></div>
+      <div id="values" class="empty" style="margin-top:8px">لا يوجد قيم بعد.</div>
+      <h3 style="font-size:15px;margin:14px 0 4px">الرسائل (آخر 50)</h3>
+      <div id="log" class="empty">لا يوجد رسائل بعد.</div>
+    </details>
+  </section>
+</main>
+
+<script src="vendor/mqtt.min.js"></script>
+<script>
+// Fallback: if the page was opened without the vendor folder, load MQTT.js from a CDN.
+if (typeof mqtt === "undefined") {
+  document.write('<script src="https://cdn.jsdelivr.net/npm/mqtt@5.16.0/dist/mqtt.min.js"><\/script>');
+}
+</script>
+<script>
+"use strict";
+
+const DEFAULTS = {
+  host: "f7701217.ala.asia-southeast1.emqxsl.com",
+  port: 8084,
+  path: "/mqtt",
+  user: "Dashboard",
+  topic: "tecjo/logo01/#",
+};
+const STORE_KEY = "logo-mqtt-test-settings";
+
+// One entry per sensor. "key" = Name in LOGO!Soft Comfort -> Cloud data transfer settings.
+// LOGO! onboard analog input: 0-10 V = raw 0-1000 (System Manual A5E33039675-AL, analog input values).
+// ifm PU5415: 0-6 bar relative, analog output 0-10 V (ifm data sheet PU5415-01).
+const CHANNELS = [
+  { key: "P1", label: "ضغط 1", input: "I1 = AI3", sensor: "ifm PU5415",
+    rawMin: 0, rawMax: 1000, min: 0, max: 6, unit: "bar", decimals: 2 },
+];
+const PERIOD_S = 10;                 // "At Frequency" period set in LOGO!Soft Comfort
+const STALE_AFTER_S = PERIOD_S * 3 + 5;
+
+// MQTT 3.1.1 CONNACK return codes (OASIS spec, section 3.2.2.3).
+const CONNACK_AR = {
+  1: "الخادم لا يدعم نسخة البروتوكول.",
+  2: "الـ Client ID مرفوض.",
+  3: "الخدمة غير متاحة.",
+  4: "اسم المستخدم أو كلمة السر غلط.",
+  5: "غير مصرّح: تأكد من اسم المستخدم (Dashboard بحرف كبير) وكلمة السر.",
+};
+
+const $ = (id) => document.getElementById(id);
+let client = null;
+let connected = false;
+let values = {};          // name -> {desc, value, at}
+let logotime = null;
+let messages = [];
+
+// ---------- settings ----------
+function loadSettings() {
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(STORE_KEY) || "{}"); } catch (e) { saved = {}; }
+  $("host").value = saved.host || DEFAULTS.host;
+  $("port").value = saved.port || DEFAULTS.port;
+  $("path").value = saved.path || DEFAULTS.path;
+  $("user").value = saved.user || DEFAULTS.user;
+  $("pass").value = saved.pass || "";
+  $("topic").value = saved.topic || DEFAULTS.topic;
+  $("remember").checked = !!saved.remember;
+  return saved;
+}
+
+function saveSettings() {
+  try {
+    if ($("remember").checked) {
+      localStorage.setItem(STORE_KEY, JSON.stringify({
+        host: $("host").value.trim(), port: $("port").value, path: $("path").value.trim(),
+        user: $("user").value.trim(), pass: $("pass").value, topic: $("topic").value.trim(),
+        remember: true,
+      }));
+    } else {
+      localStorage.removeItem(STORE_KEY);
+    }
+  } catch (e) { /* storage blocked: settings are just not remembered */ }
+}
+
+// ---------- connection ----------
+function setPill(text, cls) {
+  $("pill").textContent = text;
+  $("pill").className = "pill " + cls;
+}
+
+function setDetail(text) { $("detail").textContent = text || ""; }
+
+function describeError(err) {
+  if (!err) return "";
+  if (typeof err.code === "number" && CONNACK_AR[err.code]) return CONNACK_AR[err.code] + "\n(" + err.message + ")";
+  return err.message || String(err);
+}
+
+function connect() {
+  if (typeof mqtt === "undefined") {
+    setPill("✕ خطأ", "bad");
+    setDetail("مكتبة MQTT.js لم تُحمّل: تأكد من وجود مجلد vendor بجانب الصفحة أو من الإنترنت.");
+    $("settings").open = true;
+    return;
+  }
+  const host = $("host").value.trim();
+  const port = Number($("port").value);
+  let path = $("path").value.trim() || "/mqtt";
+  if (!path.startsWith("/")) path = "/" + path;
+  const url = "wss://" + host + ":" + port + path;
+  const topic = $("topic").value.trim();
+  saveSettings();
+  disconnect(true);
+
+  setPill("… جارِ الاتصال", "warn");
+  setDetail(url);
+  client = mqtt.connect(url, {
+    username: $("user").value.trim(),
+    password: $("pass").value,
+    clientId: "web-" + Math.random().toString(16).slice(2, 10),
+    protocolVersion: 4,
+    clean: true,
+    connectTimeout: 30000,
+    reconnectPeriod: 5000,   // keep retrying after network drops; stopped on bad credentials
+    keepalive: 60,
+  });
+
+  client.on("connect", () => {
+    connected = true;
+    setPill("● متصل", "ok");
+    setDetail(url + "\nالاشتراك في: " + topic);
+    $("connect").disabled = true;
+    $("disconnect").disabled = false;
+    client.subscribe(topic, { qos: 0 }, (err, granted) => {
+      if (err) setDetail("الاشتراك فشل: " + describeError(err));
+      else if (granted && granted[0] && granted[0].qos === 128) setDetail("الخادم رفض الاشتراك في " + topic);
+    });
+  });
+  client.on("reconnect", () => { setPill("… إعادة الاتصال", "warn"); });
+  client.on("message", onMessage);
+  client.on("error", (err) => {
+    setPill("✕ فشل الاتصال", "bad");
+    setDetail(describeError(err));
+    $("settings").open = true;
+    if (err && (err.code === 4 || err.code === 5)) disconnect(true);   // wrong credentials: no endless retries
+  });
+  client.on("close", () => {
+    connected = false;
+    if ($("pill").classList.contains("ok")) setPill("⚠ انقطع الاتصال", "warn");
+  });
+  $("connect").disabled = true;
+  $("disconnect").disabled = false;
+}
+
+function disconnect(silent) {
+  if (client) { client.end(true); client = null; }
+  connected = false;
+  if (!silent) { setPill("✕ غير متصل", "bad"); setDetail(""); }
+  $("connect").disabled = false;
+  $("disconnect").disabled = true;
+}
+
+// ---------- LOGO! data ----------
+// LOGO! 8.4 publishes {"state":{"reported":{...}}} (System Manual A5E33039675-AL, section 6.3).
+// Array Data Format: "<name>": {"desc": "AI-word-3-1", "value": [523]}
+function onMessage(topic, payload) {
+  const text = new TextDecoder().decode(payload);
+  messages.unshift({ topic, text, at: new Date() });
+  messages = messages.slice(0, 50);
+  let doc = null;
+  try { doc = JSON.parse(text); } catch (e) { doc = null; }
+  if (doc && doc.state && "reported" in doc.state) applyReported(doc.state.reported);
+  renderTiles();
+  renderLog();
+  renderValues();
+}
+
+function applyReported(rep) {
+  if (rep === null) return;          // "clean broker shadow caches" on STOP -> RUN; keep last values on screen
+  const now = new Date();
+  for (const [name, item] of Object.entries(rep)) {
+    if (name === "$logotime") { logotime = item; continue; }
+    if (name === "$style") continue;
+    if (item && typeof item === "object" && "value" in item) {
+      values[name] = { desc: item.desc || (values[name] && values[name].desc) || "", value: item.value, at: now };
+    } else {
+      values[name] = { desc: "hex", value: item, at: now };
+    }
+  }
+}
+
+function scaled(ch, raw) {
+  const r = Math.min(Math.max(raw, ch.rawMin), ch.rawMax);
+  return ch.min + (r - ch.rawMin) * (ch.max - ch.min) / (ch.rawMax - ch.rawMin);
+}
+
+function buildTiles() {
+  $("tiles").innerHTML = CHANNELS.map((ch) =>
+    '<div class="tile" id="tile-' + ch.key + '">' +
+      '<div class="label">' + escapeHtml(ch.label) + ' <span class="meta" style="display:inline">(' +
+        escapeHtml(ch.input) + " · " + escapeHtml(ch.sensor) + ")</span></div>" +
+      '<div class="figure"><span class="value">--</span><span class="unit">' + escapeHtml(ch.unit) + "</span></div>" +
+      '<div class="meter" role="img" aria-label=""><div></div></div>' +
+      '<div class="scale"><span>' + ch.min.toFixed(ch.decimals) + "</span><span>" +
+        ch.max.toFixed(ch.decimals) + " " + escapeHtml(ch.unit) + "</span></div>" +
+      '<div class="foot">بانتظار أول قراءة…</div>' +
+    "</div>").join("");
+}
+
+function renderTiles() {
+  const now = Date.now();
+  for (const ch of CHANNELS) {
+    const tile = $("tile-" + ch.key);
+    const v = values[ch.key];
+    if (!tile || !v || !Array.isArray(v.value) || typeof v.value[0] !== "number") continue;
+    const raw = v.value[0];
+    const val = scaled(ch, raw);
+    const pct = (val - ch.min) / (ch.max - ch.min) * 100;
+    tile.querySelector(".value").textContent = val.toFixed(ch.decimals);
+    tile.querySelector(".meter > div").style.width = pct.toFixed(1) + "%";
+    tile.querySelector(".meter").setAttribute("aria-label", val.toFixed(ch.decimals) + " " + ch.unit);
+    const age = Math.round((now - v.at.getTime()) / 1000);
+    const foot = tile.querySelector(".foot");
+    if (age > STALE_AFTER_S) {
+      foot.className = "foot warn";
+      foot.textContent = "⚠ لا يوجد تحديث منذ " + age + " ثانية (آخر قراءة " + fmtTime(v.at) + ")";
+    } else {
+      foot.className = "foot";
+      foot.textContent = "آخر تحديث " + fmtTime(v.at) + " · القيمة الخام " + raw + " / " + ch.rawMax;
+    }
+  }
+}
+
+function fmtTime(d) { return d.toLocaleTimeString("en-GB", { hour12: false }); }
+
+function renderValues() {
+  const names = Object.keys(values).sort();
+  const box = $("values");
+  if (!names.length && logotime === null) { box.className = "empty"; box.textContent = "لا يوجد قيم بعد."; return; }
+  box.className = "";
+  let html = "";
+  if (logotime !== null) {
+    html += '<p class="meta">LOGO! time ($logotime): ' + escapeHtml(String(logotime)) + " = " +
+            escapeHtml(new Date(logotime * 1000).toISOString().replace("T", " ").slice(0, 19)) + "</p>";
+  }
+  if (names.length) {
+    html += "<table><thead><tr><th>Name</th><th>desc</th><th>value</th><th>time</th></tr></thead><tbody>";
+    for (const n of names) {
+      const v = values[n];
+      html += "<tr><td><code>" + escapeHtml(n) + "</code></td><td><code>" + escapeHtml(v.desc) +
+              "</code></td><td><code>" + escapeHtml(JSON.stringify(v.value)) + "</code></td><td>" + fmtTime(v.at) + "</td></tr>";
+    }
+    html += "</tbody></table>";
+  }
+  box.innerHTML = html;
+}
+
+function renderLog() {
+  const box = $("log");
+  if (!messages.length) { box.className = "empty"; box.textContent = "لا يوجد رسائل بعد."; return; }
+  box.className = "";
+  box.innerHTML = messages.map((m) => {
+    let pretty = m.text;
+    try { pretty = JSON.stringify(JSON.parse(m.text), null, 1); } catch (e) { /* not JSON */ }
+    return '<div class="log-item"><div class="meta">' + fmtTime(m.at) + "  " + escapeHtml(m.topic) +
+           "</div><pre>" + escapeHtml(pretty) + "</pre></div>";
+  }).join("");
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+$("connect").addEventListener("click", connect);
+$("disconnect").addEventListener("click", () => disconnect(false));
+$("clear").addEventListener("click", () => { messages = []; values = {}; logotime = null; renderLog(); renderValues(); });
+$("remember").addEventListener("change", saveSettings);
+buildTiles();
+setInterval(renderTiles, 5000);   // refresh the "no update since" warning
+const saved = loadSettings();
+if (saved.remember && saved.pass) connect(); else $("settings").open = true;
+</script>
+</body>
+</html>
