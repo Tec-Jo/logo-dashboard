@@ -40,6 +40,10 @@
   .tile .alarm.ok { color: var(--ok); } .tile .alarm.bad { color: var(--bad); border-color: var(--bad); }
   .tile .alarm.unknown { color: var(--muted); font-weight: 400; }
   .tile.in-alarm { border-color: var(--bad); }
+  .gainrow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; color: var(--muted); }
+  .gainrow input[type=number] { width: 90px; padding: 4px 8px; }
+  .gainrow .range { direction: ltr; }
+  input.invalid { border-color: var(--bad); }
   details > summary { cursor: pointer; font-weight: 600; }
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin-top: 10px; }
   label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 3px; }
@@ -121,13 +125,17 @@ const DEFAULTS = {
   topic: "tecjo/logo01/#",
 };
 const STORE_KEY = "logo-mqtt-test-settings";
+const GAIN_KEY = "logo-dashboard-gain";   // display gain per channel, saved on this device (not secret)
 
 // One entry per sensor. "key" = Name in LOGO!Soft Comfort -> Cloud data transfer settings.
 // LOGO! onboard analog input: 0-10 V = raw 0-1000 (System Manual A5E33039675-AL, analog input values).
 // ifm PU5415: 0-6 bar relative, analog output 0-10 V (ifm data sheet PU5415-01).
+// baseMax = value at 10 V with display gain 1. Display gain g (set on the page): 0-10 V = min .. baseMax / g
+// (user request 2026-10-01: gain 1 -> 0-6 bar, gain 2 -> 0-3 bar). Only the page uses it; the LOGO!
+// alarm blocks keep their own gain (0.60) and limits.
 const CHANNELS = [
   { key: "P1", label: "ضغط 1", input: "I1 = AI3", sensor: "ifm PU5415",
-    rawMin: 0, rawMax: 1000, min: 0, max: 6, unit: "bar", decimals: 2,
+    rawMin: 0, rawMax: 1000, min: 0, baseMax: 6, unit: "bar", decimals: 2,
     // LOGO! program: M1 = high-pressure alarm, M2 = low-pressure alarm; sent as "ALM" (M-bit-1-2).
     alarm: { key: "ALM", high: 0, low: 1 } },
 ];
@@ -285,9 +293,46 @@ function applyReported(rep) {
   }
 }
 
+let gains = {};           // channel key -> display gain (> 0)
+
+function loadGains() {
+  try { gains = JSON.parse(localStorage.getItem(GAIN_KEY) || "{}") || {}; } catch (e) { gains = {}; }
+}
+function saveGains() {
+  try { localStorage.setItem(GAIN_KEY, JSON.stringify(gains)); } catch (e) { /* not remembered */ }
+}
+function gainOf(ch) {
+  const g = Number(gains[ch.key]);
+  return g > 0 ? g : 1;
+}
+function maxOf(ch) { return ch.baseMax / gainOf(ch); }
+
 function scaled(ch, raw) {
   const r = Math.min(Math.max(raw, ch.rawMin), ch.rawMax);
-  return ch.min + (r - ch.rawMin) * (ch.max - ch.min) / (ch.rawMax - ch.rawMin);
+  return ch.min + (r - ch.rawMin) * (maxOf(ch) - ch.min) / (ch.rawMax - ch.rawMin);
+}
+
+function rangeText(ch) {
+  return "0–10 V = " + ch.min.toFixed(ch.decimals) + "–" + maxOf(ch).toFixed(ch.decimals) + " " + ch.unit;
+}
+
+function updateScale(ch) {
+  const tile = $("tile-" + ch.key);
+  if (!tile) return;
+  tile.querySelector(".scale-max").textContent = maxOf(ch).toFixed(ch.decimals) + " " + ch.unit;
+  tile.querySelector(".range").textContent = rangeText(ch);
+}
+
+function onGainInput(ev) {
+  const input = ev.target;
+  const ch = CHANNELS.find((c) => c.key === input.dataset.key);
+  const g = Number(String(input.value).replace(",", "."));
+  if (!(g > 0) || g > 1000) { input.classList.add("invalid"); return; }
+  input.classList.remove("invalid");
+  gains[ch.key] = g;
+  saveGains();
+  updateScale(ch);
+  renderTiles();
 }
 
 function buildTiles() {
@@ -297,11 +342,17 @@ function buildTiles() {
         escapeHtml(ch.input) + " · " + escapeHtml(ch.sensor) + ")</span></div>" +
       '<div class="figure"><span class="value">--</span><span class="unit">' + escapeHtml(ch.unit) + "</span></div>" +
       '<div class="meter" role="img" aria-label=""><div></div></div>' +
-      '<div class="scale"><span>' + ch.min.toFixed(ch.decimals) + "</span><span>" +
-        ch.max.toFixed(ch.decimals) + " " + escapeHtml(ch.unit) + "</span></div>" +
+      '<div class="scale"><span>' + ch.min.toFixed(ch.decimals) + '</span><span class="scale-max"></span></div>' +
       '<div class="foot">بانتظار أول قراءة…</div>' +
-      (ch.alarm ? '<div class="alarm unknown">حالة الإنذار: بانتظار الـ LOGO!…</div>' : "") +
+      (ch.alarm ? '<div class="alarm unknown">حالة الإنذار: بانتظار الـ <bdi dir="ltr">LOGO!</bdi>…</div>' : "") +
+      '<div class="gainrow"><label for="gain-' + ch.key + '" style="margin:0">معامل التكبير</label>' +
+        '<input id="gain-' + ch.key + '" data-key="' + ch.key + '" type="number" inputmode="decimal" min="0.1" step="0.1" value="' +
+        gainOf(ch) + '"><span class="range"></span></div>' +
     "</div>").join("");
+  for (const ch of CHANNELS) {
+    updateScale(ch);
+    $("gain-" + ch.key).addEventListener("input", onGainInput);
+  }
 }
 
 function renderAlarm(ch, tile, now) {
@@ -326,7 +377,7 @@ function renderTiles() {
     if (!tile || !v || !Array.isArray(v.value) || typeof v.value[0] !== "number") continue;
     const raw = v.value[0];
     const val = scaled(ch, raw);
-    const pct = (val - ch.min) / (ch.max - ch.min) * 100;
+    const pct = (val - ch.min) / (maxOf(ch) - ch.min) * 100;
     tile.querySelector(".value").textContent = val.toFixed(ch.decimals);
     tile.querySelector(".meter > div").style.width = pct.toFixed(1) + "%";
     tile.querySelector(".meter").setAttribute("aria-label", val.toFixed(ch.decimals) + " " + ch.unit);
@@ -386,6 +437,7 @@ $("connect").addEventListener("click", connect);
 $("disconnect").addEventListener("click", () => disconnect(false));
 $("clear").addEventListener("click", () => { messages = []; values = {}; logotime = null; renderLog(); renderValues(); });
 $("remember").addEventListener("change", saveSettings);
+loadGains();
 buildTiles();
 setInterval(renderTiles, 5000);   // refresh the "no update since" warning
 const saved = loadSettings();
