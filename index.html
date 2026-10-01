@@ -36,6 +36,10 @@
   .scale { display: flex; justify-content: space-between; direction: ltr; color: var(--muted); font-size: 12px; margin-top: 3px; }
   .tile .foot { margin-top: 8px; font-size: 13px; color: var(--muted); }
   .tile .foot.warn { color: var(--warn); font-weight: 600; }
+  .tile .alarm { margin-top: 10px; padding: 6px 10px; border-radius: 7px; font-weight: 600; border: 1px solid var(--line); }
+  .tile .alarm.ok { color: var(--ok); } .tile .alarm.bad { color: var(--bad); border-color: var(--bad); }
+  .tile .alarm.unknown { color: var(--muted); font-weight: 400; }
+  .tile.in-alarm { border-color: var(--bad); }
   details > summary { cursor: pointer; font-weight: 600; }
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin-top: 10px; }
   label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 3px; }
@@ -123,7 +127,9 @@ const STORE_KEY = "logo-mqtt-test-settings";
 // ifm PU5415: 0-6 bar relative, analog output 0-10 V (ifm data sheet PU5415-01).
 const CHANNELS = [
   { key: "P1", label: "ضغط 1", input: "I1 = AI3", sensor: "ifm PU5415",
-    rawMin: 0, rawMax: 1000, min: 0, max: 6, unit: "bar", decimals: 2 },
+    rawMin: 0, rawMax: 1000, min: 0, max: 6, unit: "bar", decimals: 2,
+    // LOGO! program: M1 = high-pressure alarm, M2 = low-pressure alarm; sent as "ALM" (M-bit-1-2).
+    alarm: { key: "ALM", high: 0, low: 1 } },
 ];
 const PERIOD_S = 10;                 // "At Frequency" period set in LOGO!Soft Comfort
 const STALE_AFTER_S = PERIOD_S * 3 + 5;
@@ -294,13 +300,28 @@ function buildTiles() {
       '<div class="scale"><span>' + ch.min.toFixed(ch.decimals) + "</span><span>" +
         ch.max.toFixed(ch.decimals) + " " + escapeHtml(ch.unit) + "</span></div>" +
       '<div class="foot">بانتظار أول قراءة…</div>' +
+      (ch.alarm ? '<div class="alarm unknown">حالة الإنذار: بانتظار الـ LOGO!…</div>' : "") +
     "</div>").join("");
+}
+
+function renderAlarm(ch, tile, now) {
+  const a = values[ch.alarm.key];
+  const box = tile.querySelector(".alarm");
+  if (!a || !Array.isArray(a.value)) return;
+  const high = a.value[ch.alarm.high] === 1, low = a.value[ch.alarm.low] === 1;
+  const stale = (now - a.at.getTime()) / 1000 > STALE_AFTER_S;
+  if (high) { box.className = "alarm bad"; box.textContent = "▲ إنذار: ضغط عالي"; }
+  else if (low) { box.className = "alarm bad"; box.textContent = "▼ إنذار: ضغط منخفض"; }
+  else { box.className = "alarm ok"; box.textContent = "✓ الضغط ضمن الحدود"; }
+  if (stale) { box.className = "alarm unknown"; box.textContent = "حالة الإنذار غير محدّثة منذ " + fmtTime(a.at); }
+  tile.classList.toggle("in-alarm", (high || low) && !stale);
 }
 
 function renderTiles() {
   const now = Date.now();
   for (const ch of CHANNELS) {
     const tile = $("tile-" + ch.key);
+    if (tile && ch.alarm) renderAlarm(ch, tile, now);
     const v = values[ch.key];
     if (!tile || !v || !Array.isArray(v.value) || typeof v.value[0] !== "number") continue;
     const raw = v.value[0];
