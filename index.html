@@ -44,6 +44,14 @@
   .gainrow input[type=number] { width: 90px; padding: 4px 8px; }
   .gainrow .range { direction: ltr; }
   input.invalid { border-color: var(--bad); }
+  .ctl { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+  .ctl:last-child { border-bottom: 0; }
+  .ctl .name { font-weight: 600; }
+  .ctl .btns { display: flex; gap: 8px; }
+  .ctl .state { width: 100%; font-size: 13px; color: var(--muted); }
+  .ctl .state.on { color: var(--ok); font-weight: 600; } .ctl .state.warn { color: var(--warn); font-weight: 600; }
+  button.off { background: transparent; color: var(--text); border: 1px solid var(--line); }
+  textarea { width: 100%; min-height: 60px; padding: 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--bg); color: var(--text); font: 13px ui-monospace, Consolas, monospace; direction: ltr; }
   details > summary { cursor: pointer; font-weight: 600; }
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin-top: 10px; }
   label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 3px; }
@@ -75,6 +83,12 @@
   <div id="tiles" class="tiles"></div>
 
   <section class="card">
+    <h2 style="font-size:16px;margin:0 0 4px">التحكم</h2>
+    <div id="controls"></div>
+    <div id="outs" style="margin-top:6px;font-size:13px;color:var(--muted)"></div>
+  </section>
+
+  <section class="card">
     <details id="settings">
       <summary>الإعدادات والاتصال</summary>
       <div class="grid">
@@ -101,6 +115,10 @@
       <summary>تشخيص: كل القيم والرسائل</summary>
       <div class="row"><button id="clear" class="secondary">مسح السجل</button></div>
       <div id="values" class="empty" style="margin-top:8px">لا يوجد قيم بعد.</div>
+      <h3 style="font-size:15px;margin:14px 0 4px">إرسال تجريبي للـ <bdi dir="ltr">LOGO!</bdi></h3>
+      <div class="meta">Topic: <span id="cmdTopicText"></span></div>
+      <textarea id="rawCmd"></textarea>
+      <div class="row" style="margin-top:6px"><button id="sendRaw" class="secondary">إرسال</button><span id="rawResult" class="meta"></span></div>
       <h3 style="font-size:15px;margin:14px 0 4px">الرسائل (آخر 50)</h3>
       <div id="log" class="empty">لا يوجد رسائل بعد.</div>
     </details>
@@ -139,6 +157,19 @@ const CHANNELS = [
     // LOGO! program: M1 = high-pressure alarm, M2 = low-pressure alarm; sent as "ALM" (M-bit-1-2).
     alarm: { key: "ALM", high: 0, low: 1 } },
 ];
+// Commands to the LOGO!: published on the LOGO!'s Subscribe Topic (set in Cloud connection settings).
+// Each control = one Writable row in Cloud data transfer settings (Name = key). The button only shows
+// "ON" when the LOGO! itself reports the output back (feedback), never just because it was clicked.
+// Write format {"state":{"<Name>":{"value":[x]}}}: not in the Siemens manual; taken from a Home Assistant
+// forum report, to be confirmed on the real LOGO! (use "إرسال تجريبي" in diagnostics to try others).
+const CMD_TOPIC = "tecjo/logo01/sub";
+const CONTROLS = [
+  { key: "CMD", label: "مخرج Q2", feedback: { key: "OUT", index: 1, name: "\u2066Q2\u2069" } },
+];
+// "OUT" = Q-bit-1-2 (Q1 alarm output, Q2) reported by the LOGO!.
+const OUTPUTS = { key: "OUT", names: ["\u2066Q1\u2069 (الإنذار)", "\u2066Q2\u2069"] };
+const CONFIRM_TIMEOUT_S = 30;
+const LTR = (t) => "\u2066" + t + "\u2069";   // isolate Latin text inside Arabic sentences
 const PERIOD_S = 10;                 // "At Frequency" period set in LOGO!Soft Comfort
 const STALE_AFTER_S = PERIOD_S * 3 + 5;
 
@@ -235,6 +266,7 @@ function connect() {
     setDetail(url + "\nالاشتراك في: " + topic);
     $("connect").disabled = true;
     $("disconnect").disabled = false;
+    renderControls();
     client.subscribe(topic, { qos: 0 }, (err, granted) => {
       if (err) setDetail("الاشتراك فشل: " + describeError(err));
       else if (granted && granted[0] && granted[0].qos === 128) setDetail("الخادم رفض الاشتراك في " + topic);
@@ -250,6 +282,7 @@ function connect() {
   });
   client.on("close", () => {
     connected = false;
+    renderControls();
     if ($("pill").classList.contains("ok")) setPill("⚠ انقطع الاتصال", "warn");
   });
   $("connect").disabled = true;
@@ -259,6 +292,7 @@ function connect() {
 function disconnect(silent) {
   if (client) { client.end(true); client = null; }
   connected = false;
+  renderControls();
   if (!silent) { setPill("✕ غير متصل", "bad"); setDetail(""); }
   $("connect").disabled = false;
   $("disconnect").disabled = true;
@@ -275,6 +309,7 @@ function onMessage(topic, payload) {
   try { doc = JSON.parse(text); } catch (e) { doc = null; }
   if (doc && doc.state && "reported" in doc.state) applyReported(doc.state.reported);
   renderTiles();
+  renderControls();
   renderLog();
   renderValues();
 }
@@ -393,6 +428,77 @@ function renderTiles() {
   }
 }
 
+// ---------- commands ----------
+const pending = {};       // control key -> {want: 0|1, since: ms}
+
+function bitOf(key, index) {
+  const v = values[key];
+  return v && Array.isArray(v.value) && typeof v.value[index] === "number" ? v.value[index] : null;
+}
+
+function buildControls() {
+  $("controls").innerHTML = CONTROLS.map((c) =>
+    '<div class="ctl" id="ctl-' + c.key + '"><span class="name">' + escapeHtml(c.label) + "</span>" +
+      '<span class="btns"><button data-key="' + c.key + '" data-want="1">تشغيل</button>' +
+      '<button class="off" data-key="' + c.key + '" data-want="0">إطفاء</button></span>' +
+      '<div class="state"></div></div>').join("");
+  $("controls").querySelectorAll("button").forEach((b) => b.addEventListener("click", onControlClick));
+  $("cmdTopicText").textContent = CMD_TOPIC;
+  $("rawCmd").value = JSON.stringify({ state: { [CONTROLS[0].key]: { value: [1] } } });
+}
+
+function publishCmd(text, cb) {
+  if (!client || !connected) { cb(new Error("غير متصل")); return; }
+  client.publish(CMD_TOPIC, text, { qos: 1, retain: false }, cb);
+}
+
+function onControlClick(ev) {
+  const key = ev.target.dataset.key, want = Number(ev.target.dataset.want);
+  const text = JSON.stringify({ state: { [key]: { value: [want] } } });
+  pending[key] = { want, since: Date.now(), error: null };
+  publishCmd(text, (err) => { if (err) pending[key].error = err.message || String(err); renderControls(); });
+  renderControls();
+}
+
+function renderControls() {
+  const now = Date.now();
+  for (const c of CONTROLS) {
+    const row = $("ctl-" + c.key);
+    if (!row) continue;
+    row.querySelectorAll("button").forEach((b) => { b.disabled = !connected; });
+    const actual = bitOf(c.feedback.key, c.feedback.index);
+    const st = row.querySelector(".state");
+    const p = pending[c.key];
+    if (p && actual === p.want) delete pending[c.key];
+    if (p && pending[c.key]) {
+      if (p.error) { st.className = "state warn"; st.textContent = "⚠ الإرسال فشل: " + p.error; }
+      else if ((now - p.since) / 1000 > CONFIRM_TIMEOUT_S) {
+        st.className = "state warn";
+        st.textContent = "⚠ ما وصل تأكيد من الـ " + LTR("LOGO!") + " خلال " + CONFIRM_TIMEOUT_S + " ثانية (" + c.feedback.name + " لسا " +
+                         (actual === 1 ? "شغّال" : actual === 0 ? "مطفي" : "غير معروف") + ")";
+      } else {
+        st.className = "state"; st.textContent = "… تم الإرسال (" + (p.want ? "تشغيل" : "إطفاء") + ")، بانتظار تأكيد الـ " + LTR("LOGO!");
+      }
+      continue;
+    }
+    if (actual === 1) { st.className = "state on"; st.textContent = "● " + c.feedback.name + " شغّال (حسب الـ " + LTR("LOGO!") + ")"; }
+    else if (actual === 0) { st.className = "state"; st.textContent = "○ " + c.feedback.name + " مطفي (حسب الـ " + LTR("LOGO!") + ")"; }
+    else { st.className = "state"; st.textContent = "الحالة الفعلية: بانتظار الـ " + LTR("LOGO!") + "…"; }
+  }
+  const out = values[OUTPUTS.key];
+  $("outs").textContent = out && Array.isArray(out.value)
+    ? "المخارج حسب الـ " + LTR("LOGO!") + ": " +
+      OUTPUTS.names.map((n, i) => n + " " + LTR("= " + (out.value[i] === 1 ? "ON" : "OFF"))).join(" · ") +
+      " " + LTR("(" + fmtTime(out.at) + ")")
+    : "";
+}
+
+function onSendRaw() {
+  let text = $("rawCmd").value.trim();
+  try { JSON.parse(text); } catch (e) { $("rawResult").textContent = "JSON غير صالح"; return; }
+  publishCmd(text, (err) => { $("rawResult").textContent = err ? "فشل: " + (err.message || err) : "تم الإرسال " + fmtTime(new Date()); });
+}
+
 function fmtTime(d) { return d.toLocaleTimeString("en-GB", { hour12: false }); }
 
 function renderValues() {
@@ -439,7 +545,10 @@ $("clear").addEventListener("click", () => { messages = []; values = {}; logotim
 $("remember").addEventListener("change", saveSettings);
 loadGains();
 buildTiles();
-setInterval(renderTiles, 5000);   // refresh the "no update since" warning
+buildControls();
+renderControls();
+$("sendRaw").addEventListener("click", onSendRaw);
+setInterval(() => { renderTiles(); renderControls(); }, 5000);   // refresh "no update since" / confirm timeouts
 const saved = loadSettings();
 if (saved.remember && saved.pass) connect(); else $("settings").open = true;
 </script>
